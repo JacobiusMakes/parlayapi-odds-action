@@ -132,7 +132,7 @@ One row per bookmaker, market, and outcome:
 
 **Failure messages.** On any non-200 response the action fails the step and prints the API's own error code, message, and `request_id`. Include the `request_id` if you contact support.
 
-**Want to try it without a key?** The API has a free no-auth demo endpoint: `https://parlay-api.com/v1/try/baseball_mlb/odds` (also `basketball_nba`, `americanfootball_nfl`, `icehockey_nhl`, `soccer_epl`, `mma_mixed_martial_arts`). This action itself needs a key, but the demo endpoint is an easy way to see the response shape first.
+**Want to try it without a key?** The API has a free no-auth demo endpoint: `https://parlay-api.com/v1/try/baseball_mlb/odds` (also `basketball_nba`, `americanfootball_nfl`, `icehockey_nhl`, `soccer_epl`, `mma_mixed_martial_arts`). This action itself needs a key. One difference to know: the demo wraps its response in a small envelope with the events under an `events` key (capped at 5 events), while this action writes the real API response, a top-level JSON array of events. The event objects themselves have the same shape in both.
 
 ## License
 

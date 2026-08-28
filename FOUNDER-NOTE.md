@@ -15,7 +15,7 @@ The `action.yml` already has the marketplace requirements covered: `name`, `desc
 - Endpoint: `GET https://parlay-api.com/v1/sports/{sport_key}/odds` (from the live `/openapi.json`). It is v1, not v4.
 - Auth: `X-API-Key` header (recommended by the spec; `?apiKey=` and `Authorization: Bearer` also accepted).
 - Query params used: `regions` (default `us`), `markets` (default `h2h`), `oddsFormat`.
-- Success body: top-level JSON array of events (confirmed live via the keyless sandbox `/v1/sandbox/sports/{sport_key}/odds` and the keyless demo `/v1/try/{sport_key}/odds`).
+- Success body: top-level JSON array of events, confirmed live via the keyless sandbox `/v1/sandbox/sports/{sport_key}/odds`, which mirrors the real endpoint's shape. Note: the keyless demo `/v1/try/{sport_key}/odds` is NOT a byte-for-byte preview. It wraps events in a demo envelope (events nested under an `events` key), so only the event objects inside it match the real response.
 - Error body: `{"detail": {"error", "message", "signup_url", "request_id", "docs_url", "status"}}`, confirmed live with a missing key and an invalid key (both HTTP 401). The action surfaces `error`, `message`, and `request_id` on failure.
 - Free tier: 1,000 credits per month at $0, confirmed from the live `/pricing` JSON.
 - Credit cost formula "markets x regions" is from the live docs description of the odds endpoint.
