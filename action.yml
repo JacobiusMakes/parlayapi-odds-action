@@ -1,5 +1,5 @@
 name: "ParlayAPI Odds Fetch"
-description: "Fetch sports betting odds from ParlayAPI (30+ sportsbooks) into a JSON or CSV file. Built for cron workflows, models, and dashboards."
+description: "Fetch odds for private analysis into a protected runner temporary file. Verifies caller repository privacy before API access."
 author: "ParlayAPI"
 
 branding:
@@ -8,38 +8,33 @@ branding:
 
 inputs:
   api_key:
-    description: "Your ParlayAPI key. Pass it from repository secrets, never as plain text. Get a free key at https://parlay-api.com/signup"
+    description: "Your own ParlayAPI account key, supplied from repository secrets."
     required: true
   sport:
-    description: "Sport key, for example basketball_nba, americanfootball_nfl, baseball_mlb, soccer_epl. Full list: https://parlay-api.com/v1/sports"
+    description: "Sport key from https://parlay-api.com/v1/sports, for example baseball_mlb."
     required: true
   regions:
-    description: "Comma-separated bookmaker regions: us, us2, uk, eu, au and more. Default: us"
-    required: false
+    description: "Comma-separated regions: us, us2, uk, eu, fr, au, ca, mx, latam, br, asia."
     default: "us"
   markets:
-    description: "Comma-separated markets: h2h, spreads, totals. Default: h2h"
-    required: false
+    description: "Comma-separated markets: h2h, spreads, totals."
     default: "h2h"
   odds_format:
-    description: "Odds format: american or decimal. Default: american"
-    required: false
+    description: "american or decimal."
     default: "american"
   output:
-    description: "Path of the file to write. Default: odds.json"
-    required: false
+    description: "Single filename only, inside a new private runner temporary directory."
     default: "odds.json"
   format:
-    description: "Output format: json (raw API response) or csv (one row per bookmaker, market, and outcome). Default: json"
-    required: false
+    description: "json or csv. CSV contains one row per supplied outcome."
     default: "json"
 
 outputs:
   file:
-    description: "Path of the written odds file"
+    description: "Absolute path of the protected temporary file, outside the checkout."
     value: ${{ steps.fetch.outputs.file }}
   event_count:
-    description: "Number of events in the response"
+    description: "Number of events in the response, including zero for an empty array."
     value: ${{ steps.fetch.outputs.event_count }}
 
 runs:
@@ -55,82 +50,10 @@ runs:
         PARLAY_ODDS_FORMAT: ${{ inputs.odds_format }}
         PARLAY_OUTPUT: ${{ inputs.output }}
         PARLAY_FORMAT: ${{ inputs.format }}
-      run: |
-        set -euo pipefail
-
-        if [ -z "${PARLAY_API_KEY}" ]; then
-          echo "::error::api_key is empty. Add your ParlayAPI key to repository secrets and pass it as api_key. Free key: https://parlay-api.com/signup"
-          exit 1
-        fi
-
-        case "${PARLAY_FORMAT}" in
-          json|csv) ;;
-          *)
-            echo "::error::format must be 'json' or 'csv', got '${PARLAY_FORMAT}'"
-            exit 1
-            ;;
-        esac
-
-        body_file="$(mktemp)"
-        # PARLAY_BASE_URL is an optional workflow-level env override used for
-        # testing against the keyless sandbox (https://parlay-api.com/v1/sandbox).
-        base_url="${PARLAY_BASE_URL:-https://parlay-api.com/v1}"
-        url="${base_url}/sports/${PARLAY_SPORT}/odds"
-
-        http_code="$(curl -sS -G "${url}" \
-          -H "X-API-Key: ${PARLAY_API_KEY}" \
-          -H "Accept: application/json" \
-          -H "User-Agent: parlayapi-odds-action" \
-          --data-urlencode "regions=${PARLAY_REGIONS}" \
-          --data-urlencode "markets=${PARLAY_MARKETS}" \
-          --data-urlencode "oddsFormat=${PARLAY_ODDS_FORMAT}" \
-          -o "${body_file}" -w '%{http_code}')"
-
-        if [ "${http_code}" != "200" ]; then
-          api_error="$(jq -r '.detail.error // empty' "${body_file}" 2>/dev/null || true)"
-          api_message="$(jq -r '.detail.message // empty' "${body_file}" 2>/dev/null || true)"
-          request_id="$(jq -r '.detail.request_id // empty' "${body_file}" 2>/dev/null || true)"
-          if [ -n "${api_message}" ]; then
-            echo "::error::ParlayAPI request failed: HTTP ${http_code} ${api_error}. ${api_message} (request_id: ${request_id})"
-          else
-            echo "::error::ParlayAPI request failed: HTTP ${http_code}. Body: $(head -c 500 "${body_file}")"
-          fi
-          rm -f "${body_file}"
-          exit 1
-        fi
-
-        if ! jq -e 'type == "array"' "${body_file}" > /dev/null 2>&1; then
-          echo "::error::Unexpected response shape (expected a JSON array of events). Body: $(head -c 500 "${body_file}")"
-          rm -f "${body_file}"
-          exit 1
-        fi
-
-        event_count="$(jq 'length' "${body_file}")"
-
-        out_dir="$(dirname "${PARLAY_OUTPUT}")"
-        mkdir -p "${out_dir}"
-
-        if [ "${PARLAY_FORMAT}" = "csv" ]; then
-          # One row per bookmaker, market, and outcome. The point column is
-          # filled for spreads and totals and empty for h2h.
-          jq -r '
-            (["event_id","commence_time","sport_key","home_team","away_team",
-              "bookmaker","bookmaker_title","market","market_last_update",
-              "outcome","price","point"] | @csv),
-            (.[] as $e
-              | $e.bookmakers[]? as $b
-              | $b.markets[]? as $m
-              | $m.outcomes[]?
-              | [$e.id, $e.commence_time, $e.sport_key, $e.home_team, $e.away_team,
-                 $b.key, $b.title, $m.key, ($m.last_update // $b.last_update // ""),
-                 .name, .price, (.point // "")]
-              | @csv)
-          ' "${body_file}" > "${PARLAY_OUTPUT}"
-        else
-          cp "${body_file}" "${PARLAY_OUTPUT}"
-        fi
-        rm -f "${body_file}"
-
-        echo "file=${PARLAY_OUTPUT}" >> "${GITHUB_OUTPUT:-/dev/null}"
-        echo "event_count=${event_count}" >> "${GITHUB_OUTPUT:-/dev/null}"
-        echo "Wrote ${event_count} events for ${PARLAY_SPORT} to ${PARLAY_OUTPUT} (${PARLAY_FORMAT})"
+        ODDS_GITHUB_REPOSITORY: ${{ github.repository }}
+        ODDS_GITHUB_TOKEN: ${{ github.token }}
+        ODDS_GITHUB_SERVER_URL: ${{ github.server_url }}
+        ODDS_WORKSPACE: ${{ github.workspace }}
+        ODDS_RUNNER_TEMP: ${{ runner.temp }}
+        ODDS_ACTION_PATH: ${{ github.action_path }}
+      run: python3 -I "$ODDS_ACTION_PATH/fetch_odds.py"

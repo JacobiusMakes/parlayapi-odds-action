@@ -1,143 +1,123 @@
-# ParlayAPI Odds Fetch Action
+# ParlayAPI Odds Fetch Action v2
 
-[![Smoke test](https://github.com/JacobiusMakes/parlayapi-odds-action/actions/workflows/smoke.yml/badge.svg)](https://github.com/JacobiusMakes/parlayapi-odds-action/actions/workflows/smoke.yml)
-[![Release](https://img.shields.io/github/v/release/JacobiusMakes/parlayapi-odds-action)](https://github.com/JacobiusMakes/parlayapi-odds-action/releases)
+[![Offline unit tests](https://github.com/JacobiusMakes/parlayapi-odds-action/actions/workflows/smoke.yml/badge.svg)](https://github.com/JacobiusMakes/parlayapi-odds-action/actions/workflows/smoke.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Fetch live sports betting odds from [ParlayAPI](https://parlay-api.com) (30+ sportsbooks) straight into your GitHub workflow, as a JSON or CSV file. Built for cron-driven models, dashboards, and data pipelines that live in GitHub Actions.
+Bring [ParlayAPI](https://parlay-api.com) odds into a private model or internal research workflow. This action verifies the caller repository through GitHub, then writes JSON or CSV into a protected runner temporary directory outside your checkout. It prints no prices, teams, response bodies or credentials.
 
-No Node build, no Docker pull: this is a composite action using only bash, curl, and jq, all preinstalled on GitHub-hosted runners.
+v2 requires a **private GitHub.com repository** and your own ParlayAPI account key. Public repositories, organization-internal repositories and unverifiable visibility are refused before any ParlayAPI request. The composite action uses Python 3.10+ and its standard library on Linux or macOS. It has no package install step.
 
-## Quick start: scheduled odds snapshots
+## Quick start: private analysis
 
-Grab NBA odds every 6 hours and store each snapshot as a workflow artifact.
-
-```yaml
-name: NBA odds snapshot
-on:
-  schedule:
-    - cron: "0 */6 * * *"
-  workflow_dispatch:
-
-jobs:
-  odds:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Fetch odds
-        id: odds
-        uses: JacobiusMakes/parlayapi-odds-action@v1
-        with:
-          api_key: ${{ secrets.PARLAY_API_KEY }}
-          sport: basketball_nba
-          regions: us
-          markets: h2h,spreads,totals
-
-      - name: Upload snapshot
-        uses: actions/upload-artifact@v4
-        with:
-          name: nba-odds-${{ github.run_id }}
-          path: ${{ steps.odds.outputs.file }}
-```
-
-Setup:
-
-1. Get a free API key at [parlay-api.com/signup](https://parlay-api.com/signup). The free tier includes 1,000 credits per month.
-2. Add it as a repository secret named `PARLAY_API_KEY` (Settings, Secrets and variables, Actions).
-3. Commit the workflow above to `.github/workflows/odds.yml`.
-
-A call with one market and one region costs 1 credit (credits per call = markets x regions), so even an hourly cron fits inside the free tier. Current tiers and credit prices: [parlay-api.com/pricing](https://parlay-api.com/pricing).
-
-## Example: commit a CSV for a dashboard
-
-Refresh a CSV in your repo once a day, so a dashboard (Flat Data, Observable, a static site, a notebook) can read it from a stable URL.
+Create a private repository, get your own key at [signup](https://parlay-api.com/signup), and save it as a repository secret named `PARLAY_API_KEY`. Add a model script that accepts a local JSON path. Keep its diagnostics and results private; it must not print or republish the input data.
 
 ```yaml
-name: NFL odds CSV
+name: Private odds analysis
 on:
-  schedule:
-    - cron: "30 11 * * *"
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  odds:
+  analyze:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Fetch odds as CSV
-        uses: JacobiusMakes/parlayapi-odds-action@v1
+      - name: Fetch for this private project
+        id: odds
+        uses: JacobiusMakes/parlayapi-odds-action@v2
         with:
           api_key: ${{ secrets.PARLAY_API_KEY }}
-          sport: americanfootball_nfl
-          markets: h2h,spreads,totals
-          format: csv
-          output: data/nfl-odds.csv
+          sport: baseball_mlb
+          markets: h2h
 
-      - name: Commit updated CSV
+      - name: Run your internal model
+        env:
+          ODDS_FILE: ${{ steps.odds.outputs.file }}
+        run: python3 analysis.py "$ODDS_FILE"
+
+      - name: Remove the input after analysis
+        if: always() && steps.odds.outputs.file != ''
+        env:
+          ODDS_FILE: ${{ steps.odds.outputs.file }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/nfl-odds.csv
-          git diff --cached --quiet || git commit -m "Update NFL odds CSV"
-          git push
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          source = Path(os.environ["ODDS_FILE"])
+          source.unlink(missing_ok=True)
+          source.parent.rmdir()
+          PY
 ```
+
+`analysis.py` is your own model, not included with the action. Read the JSON locally with `json.load`; an empty array is a valid response and should be handled without inventing missing data. For reproducible workflows, pin a reviewed v2 release commit rather than a moving major-version tag. When adding a schedule, calculate its workload using the [current pricing and credit rules](https://parlay-api.com/pricing), including the selected markets and regions.
+
+## Data use and limits of the guard
+
+This v2 tool is designed for personal and internal analysis. Do not publish its raw odds as a public board, committed snapshot, downloadable feed, public artifact or white-label product. Each customer uses their own account and key. A private repository is a prerequisite for this action, not a license grant. Private repository collaborators and later workflow steps can still read or copy the file, and administrators can change repository visibility later.
+
+The visibility check reduces accidental distribution; it is not DRM or a change to existing API contracts. Your applicable [Terms of Service](https://parlay-api.com/terms), [Acceptable Use Policy](https://parlay-api.com/acceptable-use) and any signed agreement govern data rights. Discuss public display, redistribution or a separate license with [ParlayAPI support](https://parlay-api.com/support). A self-serve upgrade does not establish a signed redistribution grant. The action's MIT license covers its software, **not the API data**.
+
+Only use trusted workflows and runners. Unix modes restrict other users, not other processes running as the same runner user. GitHub-hosted jobs clean their temporary workspace; self-hosted runner operators remain responsible for cleanup after interruptions. The example also removes the input explicitly after analysis. Avoid public artifacts, logs, caches and commits containing responses.
 
 ## Inputs
 
-| Input | Required | Default | Description |
-|---|---|---|---|
-| `api_key` | yes | | Your ParlayAPI key. Always pass it from a secret. Free key: [parlay-api.com/signup](https://parlay-api.com/signup) |
-| `sport` | yes | | Sport key, e.g. `basketball_nba`, `americanfootball_nfl`, `baseball_mlb`, `soccer_epl`. Full live list (no key needed): [parlay-api.com/v1/sports](https://parlay-api.com/v1/sports) |
-| `regions` | no | `us` | Comma-separated bookmaker regions: `us`, `us2`, `uk`, `eu`, `au`, and more. Use `eu` for Pinnacle and European books. |
-| `markets` | no | `h2h` | Comma-separated markets: `h2h`, `spreads`, `totals` |
-| `odds_format` | no | `american` | `american` or `decimal` |
-| `output` | no | `odds.json` | Path of the file to write. Parent directories are created if needed. |
-| `format` | no | `json` | `json` writes the raw API response. `csv` flattens it to one row per bookmaker, market, and outcome. |
+| Input | Required | Default | Accepted values |
+| --- | --- | --- | --- |
+| `api_key` | yes | | Own ParlayAPI key from a repository secret; no whitespace or control characters. |
+| `sport` | yes | | Lowercase underscore-separated key from the [sports catalogue](https://parlay-api.com/v1/sports), for example `baseball_mlb`. |
+| `regions` | no | `us` | Comma-separated `us`, `us2`, `uk`, `eu`, `fr`, `au`, `ca`, `mx`, `latam`, `br`, `asia`; no spaces or duplicates. |
+| `markets` | no | `h2h` | Comma-separated `h2h`, `spreads`, `totals`; no spaces or duplicates. |
+| `odds_format` | no | `american` | `american` or `decimal`. |
+| `output` | no | `odds.json` | One filename, 1 to 128 characters, starting with a letter or digit; subsequent letters, digits, `.`, `_`, `-`. No directory paths. Use `odds.csv` with CSV if desired. |
+| `format` | no | `json` | `json` or `csv`. |
 
-## Outputs
+Repository identity, GitHub token and runner directories come directly from the GitHub Actions context. There is no input to override repository verification or the API origins. The old `PARLAY_BASE_URL` override is ignored. GitHub Enterprise Server is unsupported because verification uses the fixed GitHub.com API.
 
-| Output | Description |
-|---|---|
-| `file` | Path of the written odds file (same as the `output` input) |
-| `event_count` | Number of events in the response |
+## Outputs and source values
 
-## JSON shape
+| Output | Meaning |
+| --- | --- |
+| `file` | Absolute file path in a newly created directory under runner temporary storage, outside the checkout. Directory mode `0700`, file mode `0600`. |
+| `event_count` | Number of supplied events, including zero for an empty array. |
 
-The JSON file is the raw API response: an array of events, each with `id`, `commence_time`, `home_team`, `away_team`, and a `bookmakers` array of `markets` and `outcomes`. Full reference: [parlay-api.com/docs](https://parlay-api.com/docs).
+JSON preserves the validated API response bytes: a top-level event array with bookmaker, market and outcome objects. CSV flattens only supplied outcomes. It does not merge books, infer missing opponents, fabricate a price or calculate a replacement line.
 
-## CSV shape
+CSV columns:
 
-One row per bookmaker, market, and outcome:
-
-```csv
-"event_id","commence_time","sport_key","home_team","away_team","bookmaker","bookmaker_title","market","market_last_update","outcome","price","point"
-"2fffd3f11aad1186b2f18aebd6eb3b50","2026-08-28T23:15:00Z","baseball_mlb","Atlanta Braves","Colorado Rockies","fanduel","FanDuel","h2h","2026-08-28T16:00:01Z","Atlanta Braves",-215,""
-"2fffd3f11aad1186b2f18aebd6eb3b50","2026-08-28T23:15:00Z","baseball_mlb","Atlanta Braves","Colorado Rockies","pinnacle","Pinnacle","h2h","2026-08-28T15:59:23Z","Atlanta Braves",-222,""
+```text
+event_id,commence_time,sport_key,home_team,away_team,bookmaker,bookmaker_title,bookmaker_last_update,market,market_last_update,outcome,price,point
 ```
 
-`point` is filled for `spreads` and `totals` rows and empty for `h2h`.
+Missing/null prices, points and timestamps are empty cells. A supplied point of zero stays `0`. Book and market update times have separate columns; a book update is never represented as a supplied market update. Treat source text as data when importing CSV into other tools.
 
-## Troubleshooting
+## Failure behavior
 
-**HTTP 401 MISSING_KEY or INVALID_KEY.** The key did not reach the API, or it has a typo or stray whitespace. Check that the secret exists under the exact name your workflow references, and that you pass it as `api_key: ${{ secrets.PARLAY_API_KEY }}`. Note that secrets are not available to workflows triggered from forks.
+- Verification requires HTTP 200 from `https://api.github.com/repos/{caller}` with the exact caller `full_name`, boolean `private: true` and `visibility: "private"`. Public, internal, missing/malformed data, authentication errors and timeouts all stop before the odds request. The workflow token is used only for GitHub; the ParlayAPI key is used only for ParlayAPI.
+- The data request uses `https://parlay-api.com/v1/sports/{sport}/odds`, the validated query inputs, `dateFormat=iso` and an `X-API-Key` header. It never sends the key in the URL. It requests the endpoint's default upcoming-event scope.
+- Both requests refuse redirects, make no automatic retries and ignore environment proxy/base-URL overrides. Each has a 30-second total deadline. GitHub metadata is capped at 512 KiB; odds responses and expanded CSV output are capped at 8 MiB each.
+- Errors report a fixed explanation and, when available, HTTP status. Provider messages, body excerpts, request IDs and secrets are intentionally excluded from logs. For 401/403, check the relevant credential and repository access. For 429, reduce workload before retrying manually. For 5xx/timeouts, retry later. Oversized responses require a narrower request or another appropriately scoped private integration.
+- Failed validation or a failed request produces no data file or success output. Partial file-writing failures remove the newly created private directory.
 
-**HTTP 401 on a key that worked yesterday.** Keys can be deactivated from the dashboard. Log in at [parlay-api.com](https://parlay-api.com) and check the key status.
+## Migrating from v1
 
-**`event_count` is 0.** Usually not an error: it means no events are currently scheduled for that sport (off-season, or no games in the window). Verify the sport key against [parlay-api.com/v1/sports](https://parlay-api.com/v1/sports).
+v2 is a deliberate major-version change. Existing v1 version tags and their behavior are left unchanged; do not force-move `v1` onto this release.
 
-**Out of credits or rate limited.** Check your usage on the dashboard, and see [parlay-api.com/pricing](https://parlay-api.com/pricing) for tier limits. Reducing `markets` and `regions` reduces the credit cost of each call.
+Move your workflow to a private repository before selecting v2. Change `output: data/odds.csv` to a basename such as `output: odds.csv`, and pass `steps.odds.outputs.file` to your private analysis process. Replace workflows that commit, publish or upload raw responses with local consumption and cleanup. CSV adds `bookmaker_last_update` and no longer fills a missing market timestamp from the bookmaker timestamp. The bash/curl/jq runtime is replaced with Python stdlib, and no sandbox/base-URL override remains.
 
-**Failure messages.** On any non-200 response the action fails the step and prints the API's own error code, message, and `request_id`. Include the `request_id` if you contact support.
+## Offline verification
 
-**Want to try it without a key?** The API has a free no-auth demo endpoint: `https://parlay-api.com/v1/try/baseball_mlb/odds` (also `basketball_nba`, `americanfootball_nfl`, `icehockey_nhl`, `soccer_epl`, `mma_mixed_martial_arts`). This action itself needs a key. One difference to know: the demo wraps its response in a small envelope with the events under an `events` key (capped at 5 events), while this action writes the real API response, a top-level JSON array of events. The event objects themselves have the same shape in both.
+```sh
+python3 -m unittest discover -s tests -v
+```
 
-## License
+Tests cover request ordering and token separation, refusal before odds access, redirects, timeouts, malformed/oversized responses, input injection, file boundaries and modes, source nulls/zero points, cleanup and log secrecy. Fixtures are explicitly unit data with no real market quotes. The public repository's workflow runs these tests only; it makes no live odds requests and uses no API secret.
 
-[MIT](LICENSE)
+## Software license
 
----
-
-Part of the [ParlayAPI](https://parlay-api.com) ecosystem: a real-time sports odds API with a free tier of 1,000 credits per month, no card required. Explore all the tools at [github.com/JacobiusMakes](https://github.com/JacobiusMakes).
+[MIT](LICENSE). API data is governed separately as described above.
