@@ -1,58 +1,21 @@
-name: Smoke test
+name: Offline unit tests
 
 on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    - cron: "0 6 * * 1"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  sandbox:
+  unit:
     runs-on: ubuntu-latest
-    env:
-      # Point the action at the keyless ParlayAPI sandbox so the smoke test
-      # spends no credits and needs no secret.
-      PARLAY_BASE_URL: https://parlay-api.com/v1/sandbox
+    timeout-minutes: 3
     steps:
       - uses: actions/checkout@v4
-
-      - name: Fetch sandbox odds (json)
-        id: json
-        uses: ./
         with:
-          api_key: sandbox-smoke-test
-          sport: basketball_nba
-
-      - name: Fetch sandbox odds (csv)
-        id: csv
-        uses: ./
-        with:
-          api_key: sandbox-smoke-test
-          sport: baseball_mlb
-          format: csv
-          output: out/odds.csv
-
-      - name: Verify outputs
-        run: |
-          set -euo pipefail
-          jq -e 'type == "array" and length > 0' "${{ steps.json.outputs.file }}"
-          test "${{ steps.json.outputs.event_count }}" -gt 0
-          head -3 out/odds.csv
-          first_col="$(head -1 out/odds.csv | cut -d, -f1)"
-          test "${first_col}" = '"event_id"'
-          test "$(wc -l < out/odds.csv)" -gt 1
-          echo "OK: ${{ steps.json.outputs.event_count }} events (json), CSV header and rows present"
-
-      - name: Verify failure path (bad format input)
-        id: badformat
-        continue-on-error: true
-        uses: ./
-        with:
-          api_key: sandbox-smoke-test
-          sport: basketball_nba
-          format: xml
-
-      - name: Assert failure path failed
-        run: test "${{ steps.badformat.outcome }}" = "failure"
+          persist-credentials: false
+      - name: Test without credentials or API calls
+        run: python3 -m unittest discover -s tests -v

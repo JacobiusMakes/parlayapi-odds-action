@@ -1,27 +1,16 @@
-# Founder note: publishing to the GitHub Actions Marketplace
+# v2 release notes for maintainers
 
-This repo is release-ready but marketplace listing is a manual checkbox that only a human with admin rights can tick. Two minutes of work:
+This branch introduces a private-workflow major version. Review and publish it as a new v2 release. Keep all existing v1 release tags and the v1 alias unchanged; do not force-move v1 to this implementation. No release or Marketplace publication is performed by these instructions.
 
-1. Open the v1.0.0 release: https://github.com/JacobiusMakes/parlayapi-odds-action/releases/tag/v1.0.0
-2. Click "Edit" on the release.
-3. Check "Publish this Action to the GitHub Marketplace". GitHub will ask you to accept the GitHub Marketplace Developer Agreement the first time.
-4. Pick two categories. Suggested: "API management" and "Reporting".
-5. Click "Update release".
+Before publishing:
 
-The `action.yml` already has the marketplace requirements covered: `name`, `description`, `author`, and `branding` (icon `activity`, color `green`). The action name "ParlayAPI Odds Fetch" must be unique on the marketplace; if GitHub rejects it, tweak the `name` field in `action.yml`, commit, retag, and re-publish.
+1. Run `python3 -m unittest discover -s tests -v` and `git diff --check`.
+2. Review `action.yml` context bindings, the fixed API origins, redirect refusal and constant error messages in `fetch_odds.py`.
+3. Confirm the migration notes explain private-repository verification, temporary output paths, CSV timestamp columns, Python runtime and removal of `PARLAY_BASE_URL`.
+4. Create a new reviewed v2 version/tag through the normal release process. Marketplace agreement acceptance, if needed, is a separate administrator action. Do not claim Marketplace availability before it is actually published.
 
-## What was verified against the live API (2026-08-28)
+The public CI workflow is offline. It uses no live sandbox/demo/API calls, data artifacts or API credentials. Its tests exercise mocked HTTP transport and private runner-file handling. No live private-repository run has been performed as part of this change; offline tests do not substitute for that release validation.
 
-- Endpoint: `GET https://parlay-api.com/v1/sports/{sport_key}/odds` (from the live `/openapi.json`). It is v1, not v4.
-- Auth: `X-API-Key` header (recommended by the spec; `?apiKey=` and `Authorization: Bearer` also accepted).
-- Query params used: `regions` (default `us`), `markets` (default `h2h`), `oddsFormat`.
-- Success body: top-level JSON array of events, confirmed live via the keyless sandbox `/v1/sandbox/sports/{sport_key}/odds`, which mirrors the real endpoint's shape. Note: the keyless demo `/v1/try/{sport_key}/odds` is NOT a byte-for-byte preview. It wraps events in a demo envelope (events nested under an `events` key), so only the event objects inside it match the real response.
-- Error body: `{"detail": {"error", "message", "signup_url", "request_id", "docs_url", "status"}}`, confirmed live with a missing key and an invalid key (both HTTP 401). The action surfaces `error`, `message`, and `request_id` on failure.
-- Free tier: 1,000 credits per month at $0, confirmed from the live `/pricing` JSON.
-- Credit cost formula "markets x regions" is from the live docs description of the odds endpoint.
+This action can reduce accidental publication. It cannot control what an authorized recipient does with a local file, alter existing API contracts or grant redistribution rights. Policy/contract updates and any paid-customer notice period require a separate rollout. MIT licenses the code only.
 
-## Maintenance notes
-
-- The smoke test workflow (`.github/workflows/smoke.yml`) runs the action against the keyless sandbox on every push, weekly, and on demand. It spends no credits and needs no secrets.
-- `PARLAY_BASE_URL` is an undocumented workflow-level env override used only by the smoke test. Do not remove it from `action.yml` without updating the workflow.
-- The `v1` tag is a moving major-version alias, standard for actions. When you cut v1.1.0, move `v1` to the same commit: `git tag -f v1 && git push -f origin v1`.
+Technical reference: GitHub's [Get a repository endpoint](https://docs.github.com/en/rest/repos/repos#get-a-repository) provides `full_name`, `private` and `visibility`; [workflow contexts](https://docs.github.com/en/actions/reference/workflows-and-actions/contexts) provide the caller repository, workflow token and runner directories. The action requires the exact returned caller name and private visibility. It does not trust a caller-supplied visibility flag.
